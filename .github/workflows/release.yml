@@ -1,0 +1,34 @@
+# This workflow will build a golang project
+# For more information see: https://docs.github.com/en/actions/automating-builds-and-tests/building-and-testing-go
+
+name: Release monit_exporter
+
+on:
+  push:
+    tags: [ "*" ]
+
+jobs:
+
+  build:
+    name: GoReleaser build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out code into the Go module directory
+        uses: actions/checkout@v2
+        with:
+          # See: https://goreleaser.com/ci/actions/
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v3
+        with:
+          go-version: 1.21.3
+
+      - name: Run GoReleaser
+        uses: goreleaser/goreleaser-action@master
+        with:
+          version: latest
+          args: release --clean
+
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

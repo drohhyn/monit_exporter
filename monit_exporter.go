@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"crypto/tls"
 	"encoding/xml"
+	"errors"
 	"flag"
+	"fmt"
 	"io/ioutil"
 	"net/http"
 	"sync"
@@ -12,7 +14,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
-	"github.com/prometheus/log"
+	log "github.com/sirupsen/logrus"
 	"github.com/spf13/viper"
 	"golang.org/x/net/html/charset"
 )
@@ -27,11 +29,11 @@ var serviceTypes = map[int]string{
 	0: "filesystem",
 	1: "directory",
 	2: "file",
-	3: "program with pidfile",
-	4: "remote host",
+	3: "programPid",
+	4: "remoteHost",
 	5: "system",
 	6: "fifo",
-	7: "program with path",
+	7: "programPath",
 	8: "network",
 }
 
@@ -100,12 +102,19 @@ func FetchMonitStatus(c *Config) ([]byte, error) {
 		log.Error("Unable to fetch monit status")
 		return nil, err
 	}
+	switch resp.StatusCode {
+	case 200:
+	case 401:
+		return nil, errors.New("Authentication with monit failed")
+	default:
+		return nil, fmt.Errorf("Monit returned %s", resp.Status)
+	}
 	data, err := ioutil.ReadAll(resp.Body)
+	defer resp.Body.Close()
 	if err != nil {
 		log.Fatal("Unable to read monit status")
 		return nil, err
 	}
-	defer resp.Body.Close()
 	return data, nil
 }
 
@@ -188,7 +197,7 @@ func (e *Exporter) scrape() error {
 		if err != nil {
 			e.up.Set(0)
 			e.checkStatus.Reset()
-			log.Errorf("Error parsing data from monit: %v", err)
+			log.Errorf("Error parsing data from monit: %v\n%s", err, data)
 		} else {
 			e.up.Set(1)
 			// Constructing metrics
@@ -235,13 +244,12 @@ func main() {
 	log.Printf("Starting monit_exporter: %s", config.listen_address)
 	http.Handle(config.metrics_path, promhttp.Handler())
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`
-			<html>
-				<head><title>Monit Exporter</title></head>
-				<body>
-					<h1>Monit Exporter</h1>
-					<p><a href="` + config.metrics_path + `">Metrics</a></p>
-				</body>
+		w.Write([]byte(`<html>
+			<head><title>Monit Exporter</title></head>
+			<body>
+			<h1>Monit Exporter</h1>
+			<p><a href="` + config.metrics_path + `">Metrics</a></p>
+			</body>
 			</html>`))
 	})
 
