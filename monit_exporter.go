@@ -47,6 +47,8 @@ type monitService struct {
 	Name            string          `xml:"name"`
 	Status          int             `xml:"status"`
 	Monitored       string          `xml:"monitor"`
+	CollectedSec	int				`xml:"collected_sec"`
+	PendingAction	int				`xml:"pendingaction"`
 	Port            []monitPort     `xml:"port"`
 	ICMP            []monitICMP     `xml:"icmp"`
 }
@@ -203,16 +205,22 @@ func (e *Exporter) scrape() error {
 			// Constructing metrics
 			// Status set to 1 for failure, 0 for success
 			for _, service := range parsedData.MonitServices {
-				for _, port := range service.Port {
-					status := 1 
-					if (port.ResponseTime > 0) { status = 0 }
-						e.checkStatus.With(prometheus.Labels{"port":strconv.Itoa(port.PortNumber), "porttype":port.Type, "protocol":port.Protocol, "check_name": service.Name, "type": serviceTypes[service.Type], "monitored": service.Monitored}).Set(float64(status))
-				}
-				for _, icmp := range service.ICMP {
-					status := 1
-					if (icmp.ResponseTime > 0) { status = 0 }
-						e.checkStatus.With(prometheus.Labels{"port":"ICMP", "porttype":icmp.Type, "protocol":"ICMP", "check_name": service.Name, "type": serviceTypes[service.Type], "monitored": service.Monitored}).Set(float64(status))
+				//log.Printf("service name: %s", service.Name)
+				if len(service.Port) > 0 {
+					for _, port := range service.Port {
+						status := 1 
+						//log.Printf("port number: %s", strconv.Itoa(port.PortNumber))
+						if (port.ResponseTime > 0) { status = 0 }
+							e.checkStatus.With(prometheus.Labels{"port":strconv.Itoa(port.PortNumber), "porttype":port.Type, "protocol":port.Protocol, "check_name": service.Name, "type": serviceTypes[service.Type], "monitored": service.Monitored}).Set(float64(status))
 					}
+					for _, icmp := range service.ICMP {
+						status := 1
+						if (icmp.ResponseTime > 0) { status = 0 }
+							e.checkStatus.With(prometheus.Labels{"port":"ICMP", "porttype":icmp.Type, "protocol":"ICMP", "check_name": service.Name, "type": serviceTypes[service.Type], "monitored": service.Monitored}).Set(float64(status))
+						}
+				} else {
+					e.checkStatus.With(prometheus.Labels{"port":"...", "porttype":"---", "protocol":"+++", "check_name": service.Name, "type": serviceTypes[service.Type], "monitored": service.Monitored}).Set(float64(service.Status))
+				}
 			}
 		}
 		return err
