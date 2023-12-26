@@ -102,15 +102,12 @@ Distributed under the MIT License.
 
 See `LICENSE` file for more information.
 
-## Contact
-
-Project: [monit_exporter](https://github.com/liv-io/monit_exporter)
-
 ## Credits
 
 Acknowledgements:
 * [commercetools](https://github.com/commercetools/monit_exporter)
 * [delucks](https://github.com/delucks/monit_exporter)
+* [liv-io](https://github.com/liv-io/monit_exporter)
 
 <!-- shields.io -->
 [contributors-shield]: https://img.shields.io/github/contributors/liv-io/monit_exporter.svg?style=flat
