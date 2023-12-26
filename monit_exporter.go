@@ -76,9 +76,12 @@ type Exporter struct {
 	client*		http.Client
 
 	up		prometheus.Gauge
-	checkRemoteHost*	prometheus.GaugeVec
 	checkFile*			prometheus.GaugeVec
+	checkRemoteHost*	prometheus.GaugeVec
+	checkSystem*			prometheus.GaugeVec
 }
+
+var defaultLabels = []string{"check_name", "type", "monitored"}
 
 type Config struct {
 	listen_address   string
@@ -174,18 +177,26 @@ func NewExporter(c *Config) (*Exporter, error) {
 		checkFile: prometheus.NewGaugeVec(
 			prometheus.GaugeOpts{
 				Namespace: namespace,
-				Name:      "exporter_file",
+				Name:      "service_file",
 				Help:      "Monit file info",
 			},
-			[]string{"size", "check_name", "type", "monitored"},
+			append(defaultLabels, "size"),
 		),
 		checkRemoteHost: prometheus.NewGaugeVec(
 			prometheus.GaugeOpts{
 				Namespace: namespace,
-				Name:      "exporter_remote_host",
+				Name:      "service_remote_host",
 				Help:      "Monit remote host check info",
 			},
-			[]string{"port", "porttype", "protocol", "check_name", "type", "monitored"},
+			append(defaultLabels, "port", "porttype", "protocol"),
+		),
+		checkSystem: prometheus.NewGaugeVec(
+			prometheus.GaugeOpts{
+				Namespace: namespace,
+				Name:      "service_system",
+				Help:      "Monit system check info",
+			},
+			append(defaultLabels, "memory"),
 		),
 	}, nil
 }
@@ -196,6 +207,7 @@ func (e *Exporter) Describe(ch chan<- *prometheus.Desc) {
 	e.up.Describe(ch)
 	e.checkFile.Describe(ch)
 	e.checkRemoteHost.Describe(ch)
+	e.checkSystem.Describe(ch)
 	//@TODO: add the additional services
 }
 
@@ -206,6 +218,7 @@ func (e *Exporter) scrape() error {
 		e.up.Set(0)
 		e.checkFile.Reset()
 		e.checkRemoteHost.Reset()
+		e.checkSystem.Reset()
 		log.Errorf("Error getting monit status: %v", err)
 		return err
 	} else {
@@ -214,6 +227,7 @@ func (e *Exporter) scrape() error {
 			e.up.Set(0)
 			e.checkFile.Reset()
 			e.checkRemoteHost.Reset()
+			e.checkSystem.Reset()
 			log.Errorf("Error parsing data from monit: %v\n%s", err, data)
 		} else {
 			e.up.Set(1)
@@ -236,6 +250,8 @@ func (e *Exporter) scrape() error {
 						if (icmp.ResponseTime > 0) { status = 0 }
 							e.checkRemoteHost.With(prometheus.Labels{"port":"ICMP", "porttype":icmp.Type, "protocol":"ICMP", "check_name": service.Name, "type": serviceTypes[service.Type], "monitored": service.Monitored}).Set(float64(status))
 						}				
+				} else if(service.Type == 5) {
+					e.checkSystem.With(prometheus.Labels{"memory":strconv.FormatFloat(float64(service.Memory), 'f', -1, 32), "check_name": service.Name, "type": serviceTypes[service.Type], "monitored": service.Monitored}).Set(float64(service.Status))
 				}
 			}
 		}
@@ -250,10 +266,12 @@ func (e *Exporter) Collect(ch chan<- prometheus.Metric) {
 	defer e.mutex.Unlock()
 	e.checkFile.Reset()
 	e.checkRemoteHost.Reset()
+	e.checkSystem.Reset()
 	e.scrape()
 	e.up.Collect(ch)
 	e.checkFile.Collect(ch)
 	e.checkRemoteHost.Collect(ch)
+	e.checkSystem.Collect(ch)
 	return
 }
 
