@@ -47,10 +47,12 @@ type monitService struct {
 	Name            string          `xml:"name"`
 	Status          int             `xml:"status"`
 	Monitored       string          `xml:"monitor"`
-	CollectedSec	int				`xml:"collected_sec"`
-	PendingAction	int				`xml:"pendingaction"`
-	Port            []monitPort     `xml:"port"`
-	ICMP            []monitICMP     `xml:"icmp"`
+	//CollectedSec	int				`xml:"collected_sec"`
+	//PendingAction	int				`xml:"pendingaction"`
+	Size			int				`xml:"size"`//type=2
+	Port            []monitPort     `xml:"port"`//type=4
+	ICMP            []monitICMP     `xml:"icmp"`//type=4
+	Memory			float32			`xml:"system>memory>percent"`//type=5
 }
 
 type monitPort struct {
@@ -74,7 +76,8 @@ type Exporter struct {
 	client*		http.Client
 
 	up		prometheus.Gauge
-	checkStatus*	prometheus.GaugeVec
+	checkRemoteHost*	prometheus.GaugeVec
+	checkFile*			prometheus.GaugeVec
 }
 
 type Config struct {
@@ -161,20 +164,28 @@ func ParseConfig() *Config {
 
 // Returns an initialized Exporter.
 func NewExporter(c *Config) (*Exporter, error) {
-
 	return &Exporter{
 		config: c,
 		up: prometheus.NewGauge(prometheus.GaugeOpts{
+			Namespace: namespace,
+			Name:      "exporter_up",
+			Help:      "Monit status availability",
+		}),
+		checkFile: prometheus.NewGaugeVec(
+			prometheus.GaugeOpts{
 				Namespace: namespace,
-				Name:      "exporter_up",
-				Help:      "Monit status availability",
-			}),
-		checkStatus: prometheus.NewGaugeVec(prometheus.GaugeOpts{
-				Namespace: namespace,
-				Name:      "exporter_service_check",
-				Help:      "Monit service check info",
+				Name:      "exporter_file",
+				Help:      "Monit file info",
 			},
-		[]string{"port", "porttype", "protocol", "check_name", "type", "monitored"},
+			[]string{"size", "check_name", "type", "monitored"},
+		),
+		checkRemoteHost: prometheus.NewGaugeVec(
+			prometheus.GaugeOpts{
+				Namespace: namespace,
+				Name:      "exporter_remote_host",
+				Help:      "Monit remote host check info",
+			},
+			[]string{"port", "porttype", "protocol", "check_name", "type", "monitored"},
 		),
 	}, nil
 }
@@ -183,7 +194,9 @@ func NewExporter(c *Config) (*Exporter, error) {
 // implements prometheus.Collector.
 func (e *Exporter) Describe(ch chan<- *prometheus.Desc) {
 	e.up.Describe(ch)
-	e.checkStatus.Describe(ch)
+	e.checkFile.Describe(ch)
+	e.checkRemoteHost.Describe(ch)
+	//@TODO: add the additional services
 }
 
 func (e *Exporter) scrape() error {
@@ -191,14 +204,16 @@ func (e *Exporter) scrape() error {
 	if err != nil {
 		// set "monit_exporter_up" gauge to 0, remove previous metrics from e.checkStatus vector
 		e.up.Set(0)
-		e.checkStatus.Reset()
+		e.checkFile.Reset()
+		e.checkRemoteHost.Reset()
 		log.Errorf("Error getting monit status: %v", err)
 		return err
 	} else {
 		parsedData, err := ParseMonitStatus(data)
 		if err != nil {
 			e.up.Set(0)
-			e.checkStatus.Reset()
+			e.checkFile.Reset()
+			e.checkRemoteHost.Reset()
 			log.Errorf("Error parsing data from monit: %v\n%s", err, data)
 		} else {
 			e.up.Set(1)
@@ -206,20 +221,21 @@ func (e *Exporter) scrape() error {
 			// Status set to 1 for failure, 0 for success
 			for _, service := range parsedData.MonitServices {
 				//log.Printf("service name: %s", service.Name)
-				if len(service.Port) > 0 {
+				//
+				if(service.Type == 2) {
+					e.checkFile.With(prometheus.Labels{"size":strconv.Itoa(service.Size), "check_name": service.Name, "type": serviceTypes[service.Type], "monitored": service.Monitored}).Set(float64(service.Status))
+				} else if(service.Type == 4) {
 					for _, port := range service.Port {
 						status := 1 
 						//log.Printf("port number: %s", strconv.Itoa(port.PortNumber))
 						if (port.ResponseTime > 0) { status = 0 }
-							e.checkStatus.With(prometheus.Labels{"port":strconv.Itoa(port.PortNumber), "porttype":port.Type, "protocol":port.Protocol, "check_name": service.Name, "type": serviceTypes[service.Type], "monitored": service.Monitored}).Set(float64(status))
+							e.checkRemoteHost.With(prometheus.Labels{"port":strconv.Itoa(port.PortNumber), "porttype":port.Type, "protocol":port.Protocol, "check_name": service.Name, "type": serviceTypes[service.Type], "monitored": service.Monitored}).Set(float64(status))
 					}
 					for _, icmp := range service.ICMP {
 						status := 1
 						if (icmp.ResponseTime > 0) { status = 0 }
-							e.checkStatus.With(prometheus.Labels{"port":"ICMP", "porttype":icmp.Type, "protocol":"ICMP", "check_name": service.Name, "type": serviceTypes[service.Type], "monitored": service.Monitored}).Set(float64(status))
-						}
-				} else {
-					e.checkStatus.With(prometheus.Labels{"port":"...", "porttype":"---", "protocol":"+++", "check_name": service.Name, "type": serviceTypes[service.Type], "monitored": service.Monitored}).Set(float64(service.Status))
+							e.checkRemoteHost.With(prometheus.Labels{"port":"ICMP", "porttype":icmp.Type, "protocol":"ICMP", "check_name": service.Name, "type": serviceTypes[service.Type], "monitored": service.Monitored}).Set(float64(status))
+						}				
 				}
 			}
 		}
@@ -232,10 +248,12 @@ func (e *Exporter) scrape() error {
 func (e *Exporter) Collect(ch chan<- prometheus.Metric) {
 	e.mutex.Lock() // Protect metrics from concurrent collects.
 	defer e.mutex.Unlock()
-	e.checkStatus.Reset()
+	e.checkFile.Reset()
+	e.checkRemoteHost.Reset()
 	e.scrape()
 	e.up.Collect(ch)
-	e.checkStatus.Collect(ch)
+	e.checkFile.Collect(ch)
+	e.checkRemoteHost.Collect(ch)
 	return
 }
 
